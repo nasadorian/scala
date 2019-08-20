@@ -349,22 +349,52 @@ trait ContextErrors {
         issueNormalTypeError(tree, "ambiguous parent class qualifier")
 
       //typedSelect
-      def NotAMemberError(sel: Tree, qual: Tree, name: Name) = {
-        def errMsg = {
+      def NotAMemberError(sel: Tree, qual: Tree, name: Name, cx: Context) = {
+        import util.{ EditDistance, StringUtil }
+        def errMsg: String = {
           val owner            = qual.tpe.typeSymbol
           val target           = qual.tpe.widen
           def targetKindString = if (owner.isTypeParameterOrSkolem) "type parameter " else ""
           def nameString       = decodeWithKind(name, owner)
           /* Illuminating some common situations and errors a bit further. */
           def addendum         = {
+            val companionSymbol: Symbol = {
+              if (name.isTermName && owner.isPackageClass)
+                target.member(name.toTypeName)
+              else NoSymbol
+            }
             val companion = {
-              if (name.isTermName && owner.isPackageClass) {
-                target.member(name.toTypeName) match {
-                  case NoSymbol => ""
-                  case sym      => "\nNote: %s exists, but it has no companion object.".format(sym)
-                }
+              if (companionSymbol == NoSymbol) ""
+              else s"\nnote: $companionSymbol exists, but it has no companion object."
+            }
+            // find out all the names available under target within 2 edit distances
+            lazy val alternatives: List[String] = {
+              val editThreshold = 2
+              val x = name.decode
+              if (context.openImplicits.nonEmpty || (x.size < 2) || x.endsWith("=")) Nil
+              else {
+                target.members.iterator
+                  .filter(sym => (sym.isTerm == name.isTermName) &&
+                    !sym.isConstructor &&
+                    !nme.isLocalName(sym.name) &&
+                    cx.isAccessible(sym, target))
+                  .map(_.name.decode)
+                  .filter(n => (n.length > 2) &&
+                    (math.abs(n.length - x.length) <= editThreshold) &&
+                    (n != x) &&
+                    !n.contains("$") &&
+                    EditDistance.levenshtein(n, x) <= editThreshold)
+                  .distinct.toList
               }
-              else ""
+            }
+            val altStr: String = {
+              val maxSuggestions = 4
+              if (companionSymbol != NoSymbol) ""
+              else
+                alternatives match {
+                  case Nil => ""
+                  case xs  => "\ndid you mean " + StringUtil.oxford(xs.sorted.take(maxSuggestions), "or") + "?"
+                }
             }
             val semicolon = (
               if (linePrecedes(qual, sel))
@@ -376,7 +406,7 @@ trait ContextErrors {
               if (ObjectClass.info.member(name).exists) notAnyRefMessage(target)
               else ""
             )
-            companion + notAnyRef + semicolon
+            companion + altStr + notAnyRef + semicolon
           }
           def targetStr = targetKindString + target.directObjectString
           withAddendum(qual.pos)(
@@ -675,7 +705,7 @@ trait ContextErrors {
         val f = meth.name.decoded
         val paf = s"$f(${ meth.asMethod.paramLists map (_ map (_ => "_") mkString ",") mkString ")(" })"
         val advice =
-          if (meth.isConstructor || meth.info.params.length > definitions.MaxFunctionArity) ""
+          if (meth.isConstructor || meth.info.params.lengthIs > definitions.MaxFunctionArity) ""
           else s"""
             |Unapplied methods are only converted to functions when a function type is expected.
             |You can make this conversion explicit by writing `$f _` or `$paf` instead of `$f`.""".stripMargin
@@ -751,12 +781,10 @@ trait ContextErrors {
       def FinitaryError(tparam: Symbol) =
         issueSymbolTypeError(tparam, "class graph is not finitary because type parameter "+tparam.name+" is expansively recursive")
 
-      def QualifyingClassError(tree: Tree, qual: Name) = {
+      def QualifyingClassError(tree: Tree, qual: Name) =
         issueNormalTypeError(tree,
-          if (qual.isEmpty) tree + " can be used only in a class, object, or template"
-          else qual + " is not an enclosing class")
-        setError(tree)
-      }
+          if (qual.isEmpty) s"$tree can be used only in a class, object, or template"
+          else s"$qual is not an enclosing class")
 
       // def stabilize
       def NotAValueError(tree: Tree, sym: Symbol) = {

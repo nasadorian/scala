@@ -172,14 +172,14 @@ class ListBuffer[A]
 
   def update(idx: Int, elem: A): Unit = {
     ensureUnaliased()
-    if (idx < 0 || idx >= len) throw new IndexOutOfBoundsException(idx.toString)
+    if (idx < 0 || idx >= len) throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${len-1})")
     val p = locate(idx)
     setNext(p, elem :: getNext(p).tail)
   }
 
   def insert(idx: Int, elem: A): Unit = {
     ensureUnaliased()
-    if (idx < 0 || idx > len) throw new IndexOutOfBoundsException(idx.toString)
+    if (idx < 0 || idx > len) throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${len-1})")
     if (idx == len) +=(elem)
     else {
       val p = locate(idx)
@@ -210,7 +210,7 @@ class ListBuffer[A]
     val it = elems.iterator
     if (it.hasNext) {
       ensureUnaliased()
-      if (idx < 0 || idx > len) throw new IndexOutOfBoundsException(idx.toString)
+      if (idx < 0 || idx > len) throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${len-1})")
       if (idx == len) ++=(elems)
       else insertAfter(locate(idx), it)
     }
@@ -218,7 +218,7 @@ class ListBuffer[A]
 
   def remove(idx: Int): A = {
     ensureUnaliased()
-    if (idx < 0 || idx >= len) throw new IndexOutOfBoundsException(idx.toString)
+    if (idx < 0 || idx >= len) throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${len-1})")
     val p = locate(idx)
     val nx = getNext(p)
     setNext(p, nx.tail)
@@ -229,7 +229,7 @@ class ListBuffer[A]
   def remove(idx: Int, count: Int): Unit =
     if (count > 0) {
       ensureUnaliased()
-      if (idx < 0 || idx + count > len) throw new IndexOutOfBoundsException(idx.toString)
+      if (idx < 0 || idx + count > len) throw new IndexOutOfBoundsException(s"$idx to ${idx + count} is out of bounds (min 0, max ${len-1})")
       removeAfter(locate(idx), count)
     } else if (count < 0) {
       throw new IllegalArgumentException("removing negative number of elements: " + count)
@@ -291,6 +291,25 @@ class ListBuffer[A]
     insertAfter(p, patch.iterator)
     this
   }
+
+  /**
+   * Selects the last element.
+   *
+   * Runs in constant time.
+   *
+   * @return The last element of this $coll.
+   * @throws NoSuchElementException If the $coll is empty.
+   */
+  override def last: A = if (last0 eq null) throw new NoSuchElementException("last of empty ListBuffer") else last0.head
+
+  /**
+   * Optionally selects the last element.
+   *
+   * Runs in constant time.
+   *
+   * @return the last element of this $coll$ if it is nonempty, `None` if it is empty.
+   */
+  override def lastOption: Option[A] = if (last0 eq null) None else Some(last0.head)
 
   override protected[this] def stringPrefix = "ListBuffer"
 

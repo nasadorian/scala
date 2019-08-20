@@ -453,10 +453,14 @@ trait Typers extends Adaptations with Tags with TypersTracking with PatternTyper
      *  of a this or super with prefix `qual`.
      *  packageOk is equal false when qualifying class symbol
      */
-    def qualifyingClass(tree: Tree, qual: Name, packageOK: Boolean) =
+    def qualifyingClass(tree: Tree, qual: Name, packageOK: Boolean, immediate: Boolean) =
       context.enclClass.owner.ownerChain.find(o => qual.isEmpty || o.isClass && o.name == qual) match {
         case Some(c) if packageOK || !c.isPackageClass => c
-        case _                                         => QualifyingClassError(tree, qual) ; NoSymbol
+        case _ =>
+          QualifyingClassError(tree, qual)
+          // Delay `setError` in namer, scala/bug#10748
+          if (immediate) setError(tree) else unit.toCheck += (() => setError(tree))
+          NoSymbol
       }
 
     /** The typer for an expression, depending on where we are. If we are before a superclass
@@ -2069,7 +2073,7 @@ trait Typers extends Adaptations with Tags with TypersTracking with PatternTyper
           val (superConstr, preArgs) = decompose(fn)
           val params = fn.tpe.params
           // appending a dummy tree to represent Nil for an empty varargs (is this really necessary?)
-          val applyArgs = if (args.length < params.length) args :+ EmptyTree else args take params.length
+          val applyArgs = if (args.sizeCompare(params) < 0) args :+ EmptyTree else args take params.length
 
           assert(sameLength(applyArgs, params) || call.isErrorTyped,
             s"arity mismatch but call is not error typed: $clazz (params=$params, args=$applyArgs)")
@@ -3312,7 +3316,7 @@ trait Typers extends Adaptations with Tags with TypersTracking with PatternTyper
       exists2(formals, args) {
         case (formal, Function(vparams, _)) =>
           (vparams exists (_.tpt.isEmpty)) &&
-          vparams.length <= MaxFunctionArity &&
+          vparams.lengthIs <= MaxFunctionArity &&
           (formal baseType FunctionClass(vparams.length) match {
             case TypeRef(_, _, formalargs) =>
               ( exists2(formalargs, vparams)((formal, vparam) =>
@@ -3828,7 +3832,7 @@ trait Typers extends Adaptations with Tags with TypersTracking with PatternTyper
         else if (isJava || annTypeSym.isNonBottomSubClass(ConstantAnnotationClass)) {
           // Arguments of Java annotations and ConstantAnnotations are checked to be constants and
           // stored in the `assocs` field of the resulting AnnotationInfo
-          if (argss.length > 1) {
+          if (argss.lengthIs > 1) {
             reportAnnotationError(MultipleArgumentListForAnnotationError(ann))
           } else {
             // TODO: annType may have undetermined type params -- can we infer them?
@@ -4287,9 +4291,15 @@ trait Typers extends Adaptations with Tags with TypersTracking with PatternTyper
         if (name == nme.ERROR || qual.tpe.widen.isErroneous)
           NoSymbol
         else lookupInOwner(qual.tpe.typeSymbol, name) orElse {
-          NotAMemberError(tree, qual, name)
+          NotAMemberError(tree, qual, name, startingIdentContext)
           NoSymbol
         }
+      )
+
+      def startingIdentContext = (
+        // ignore current variable scope in patterns to enforce linearity
+        if (mode.inNone(PATTERNmode | TYPEPATmode)) context
+        else context.outer
       )
 
       def typedAnnotated(atd: Annotated): Tree = {
@@ -4583,7 +4593,7 @@ trait Typers extends Adaptations with Tags with TypersTracking with PatternTyper
             && !(sym.isJavaAnnotation && context.inAnnotation))
           IsAbstractError(tree, sym)
         else if (isPrimitiveValueClass(sym)) {
-          NotAMemberError(tpt, TypeTree(tp), nme.CONSTRUCTOR)
+          NotAMemberError(tpt, TypeTree(tp), nme.CONSTRUCTOR, startingIdentContext)
           setError(tpt)
         }
         else if (!(  tp == sym.typeOfThis // when there's no explicit self type -- with (#3612) or without self variable
@@ -4931,7 +4941,7 @@ trait Typers extends Adaptations with Tags with TypersTracking with PatternTyper
       }
 
       def typedThis(tree: This) =
-        tree.symbol orElse qualifyingClass(tree, tree.qual, packageOK = false) match {
+        tree.symbol orElse qualifyingClass(tree, tree.qual, packageOK = false, immediate = true) match {
           case NoSymbol => tree
           case clazz    =>
             tree setSymbol clazz setType clazz.thisType.underlying

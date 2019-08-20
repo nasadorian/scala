@@ -16,6 +16,8 @@ package collection.immutable
 import collection.{AbstractIterator, Iterator}
 import java.lang.String
 
+import scala.util.hashing.MurmurHash3
+
 /** The `Range` class represents integer values in range
   *  ''[start;end)'' with non-zero step value `step`.
   *  It's a special case of an indexed sequence.
@@ -165,7 +167,7 @@ sealed abstract class Range(
   @throws[IndexOutOfBoundsException]
   final def apply(idx: Int): Int = {
     validateMaxLength()
-    if (idx < 0 || idx >= numRangeElements) throw new IndexOutOfBoundsException(idx.toString)
+    if (idx < 0 || idx >= numRangeElements) throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${numRangeElements-1})")
     else start + (step * idx)
   }
 
@@ -417,7 +419,9 @@ sealed abstract class Range(
       super.equals(other)
   }
 
-  /* Note: hashCode can't be overridden without breaking Seq's equals contract. */
+  final override def hashCode: Int =
+    if(length >= 2) MurmurHash3.rangeHash(start, step, lastElement)
+    else super.hashCode
 
   final override def toString: String = {
     val preposition = if (isInclusive) "to" else "until"
